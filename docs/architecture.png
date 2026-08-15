@@ -1,0 +1,16 @@
+flowchart TD
+    A[Voice Input] --> B[STT: Sarvam/ElevenLabs]
+    B --> C[Transcript]
+    C --> D[Chunking: Fixed-size/Semantic/Recursive/Metadata-aware/Sentence-window]
+    D --> E[Embedding: SentenceTransformer]
+    E --> F[Vector Store: FAISS]
+    F --> G[Retrieval: Top-k chunks]
+    G --> H[Optional: Reranking]
+    H --> I[Guardrails: Safety/Topic/Grounding/Hallucination]
+    I --> J[Generation: LLM]
+    J --> K[Answer Output]
+    style L fill:#f9f,stroke:#333,stroke-width:2px
+    subgraph Observability
+        L[Latency Logging: Each stage logs latency]
+    end
+    style Observability fill:#e6f7ff,stroke:#1890ff,stroke-width:1px

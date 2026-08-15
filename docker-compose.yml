@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - STT_PROVIDER=${STT_PROVIDER}
+      - SARVAM_API_KEY=${SARVAM_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - VECTOR_DB_PATH=${VECTOR_DB_PATH}
+      - LATENCY_BUDGET_STT=${LATENCY_BUDGET_STT}
+      - LATENCY_BUDGET_CHUNKING=${LATENCY_BUDGET_CHUNKING}
+      - LATENCY_BUDGET_RETRIEVAL=${LATENCY_BUDGET_RETRIEVAL}
+      - LATENCY_BUDGET_GENERATION=${LATENCY_BUDGET_GENERATION}
+      - LATENCY_BUDGET_GUARDRAILS=${LATENCY_BUDGET_GUARDRAILS}
+      - CHUNK_SIZE=${CHUNK_SIZE}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP}
+      - TOP_K=${TOP_K}
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app/backend
+    depends_on:
+      - vector-db
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000/api
+    volumes:
+      - ./frontend:/app/frontend
+    depends_on:
+      - backend
+
+  vector-db:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+
+volumes:
+  data:
