@@ -5,13 +5,13 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Copy package files
-COPY frontend/package*.json ./
+COPY package*.json ./
 
 # Install dependencies
 RUN npm ci
 
 # Copy the rest of the frontend code
-COPY frontend/ .
+COPY . .
 
 # Build the Next.js app
 RUN npm run build
