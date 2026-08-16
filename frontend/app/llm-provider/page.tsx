@@ -176,7 +176,7 @@ export default function LLMProviderPage() {
                   <div className="relative">
                     <select
                       value={selectedProvider}
-                      onChange={(e) => setSelectedProvider(e.target.value)}
+                      onChange={handleProviderChange}
                       className="w-full appearance-none bg-[#0f1115] border border-[#272b36] rounded-xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-brand-main focus:border-transparent transition-all shadow-inner cursor-pointer"
                     >
                       {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
