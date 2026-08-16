@@ -1,8 +1,8 @@
 from typing import List, Dict, Any
-from indexing.vector_store import VectorStoreBase
+from app.indexing.vector_store import VectorStore
 
 class Retriever:
-    def __init__(self, vector_store: VectorStoreBase, k: int = 5):
+    def __init__(self, vector_store: VectorStore, k: int = 5):
         self.vector_store = vector_store
         self.k = k
 

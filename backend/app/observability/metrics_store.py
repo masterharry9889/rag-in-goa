@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from observability.latency_logger import LatencyLogger
+from app.observability.latency_logger import LatencyLogger
 import numpy as np
 
 class MetricsStore:

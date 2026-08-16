@@ -1,4 +1,4 @@
-from chunking.base import ChunkerStrategy
+from app.chunking.base import ChunkerStrategy
 
 class FixedSizeChunker(ChunkerStrategy):
     def __init__(self, chunk_size: int = 512, overlap: int = 50):

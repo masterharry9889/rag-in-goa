@@ -1,7 +1,7 @@
 import os
 import requests
 import base64
-from stt.base import STTBase
+from app.stt.base import STTBase
 
 class SarvamClient(STTBase):
     def __init__(self):

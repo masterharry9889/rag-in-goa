@@ -1,17 +1,25 @@
 from typing import Dict, Any
 import time
 import os
-from stt.base import STTBase
-from stt.sarvam_client import SarvamClient
-from stt.elevenlabs_client import ElevenLabsClient
-from chunking.registry import ChunkerRegistry
-from retrieval.retriever import Retriever
-from retrieval.reranker import Reranker
-from generation.prompt_templates import PROMPT_TEMPLATE
-from generation.llm_client import LLMClient
-from observability.latency_logger import LatencyLogger
-from indexing.embedder import Embedder
-from indexing.vector_store import VectorStore
+import asyncio
+from app.stt.base import STTBase
+from app.stt.sarvam_client import SarvamClient
+from app.stt.elevenlabs_client import ElevenLabsClient
+from app.chunking.registry import ChunkerRegistry
+from app.retrieval.retriever import Retriever
+from app.retrieval.reranker import Reranker
+from app.generation.prompt_templates import PROMPT_TEMPLATE
+from app.generation.llm_client import LLMClient
+from app.observability.latency_logger import LatencyLogger
+from app.indexing.embedder import Embedder
+from app.indexing.vector_store import VectorStore
+# Guardrails imports
+from app.guardrails.input_filter import is_input_safe, is_input_on_topic
+from app.guardrails.grounding_check import is_grounded
+from app.guardrails.hallucination_check import is_hallucinated
+from app.guardrails.refusal_templates import get_refusal_template
+# Retry policy
+from .retry_policy import retry_with_backoff
 
 # Initialize components (in practice, these would be dependency injected)
 stt_provider = os.getenv("STT_PROVIDER", "sarvam")  # or from config
@@ -41,6 +49,8 @@ latency_logger = LatencyLogger()
 
 async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for speech-to-text transcription."""
+    if state.get("should_refuse", False):
+        return state
     start_time = time.time()
     try:
         # In a real scenario, state would contain audio_data
@@ -49,7 +59,13 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not audio_data:
             raise ValueError("No audio data provided")
         
-        transcript = await stt_client.transcribe(audio_data)
+        # Retry logic for STT call using the retry_with_backoff function
+        @retry_with_backoff
+        async def _transcribe_with_retry():
+            return await stt_client.transcribe(audio_data)
+        
+        transcript = await _transcribe_with_retry()
+        
         latency = (time.time() - start_time) * 1000
         latency_logger.log("stt", latency)
         
@@ -65,6 +81,8 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for retrieving relevant chunks."""
+    if state.get("should_refuse", False):
+        return state
     start_time = time.time()
     try:
         query = state.get("transcript", "")
@@ -93,33 +111,42 @@ async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for running guardrails on input and retrieved context."""
+    if state.get("should_refuse", False):
+        return state
     start_time = time.time()
     try:
         query = state.get("transcript", "")
         chunks = state.get("chunks", [])
         
-        # Placeholder for actual guardrail logic
-        # In practice, we would check:
-        # 1. Input filter: is the query on-topic and safe?
-        # 2. Grounding check: are the chunks relevant to the query?
-        # 3. Hallucination check: (usually done after generation, but we can do a preliminary check)
-        
-        # For now, we just pass through and set a flag if we should refuse
-        # We'll assume we have a function to check if the query is safe and on-topic
-        is_safe = True  # Placeholder
-        is_on_topic = True  # Placeholder
-        
+        # 1. Input filter
+        is_safe = is_input_safe(query)
+        is_on_topic = is_input_on_topic(query)
         if not is_safe or not is_on_topic:
-            # We can set a flag to refuse answering
-            return {
-                "should_refuse": True,
-                "refusal_reason": "Query is unsafe or off-topic",
-                "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
-            }
+            if not is_safe and not is_on_topic:
+                reason = "Query is unsafe and off-topic"
+            elif not is_safe:
+                reason = "Query is unsafe"
+            else:
+                reason = "Query is off-topic"
+            state["should_refuse"] = True
+            state["refusal_reason"] = reason
+            state["refusal_guardrail"] = "input_filter"
+            latency = (time.time() - start_time) * 1000
+            latency_logger.log("guardrails", latency)
+            return state
+        
+        # 2. Grounding check: check if the query is grounded in the chunks (as a proxy for relevance)
+        # We use the query as the answer in the grounding check to see if the chunks support the query.
+        if not is_grounded(query, chunks):
+            state["should_refuse"] = True
+            state["refusal_reason"] = "Retrieved chunks do not support answering the query"
+            state["refusal_guardrail"] = "grounding_check"
+            latency = (time.time() - start_time) * 1000
+            latency_logger.log("guardrails", latency)
+            return state
         
         latency = (time.time() - start_time) * 1000
         latency_logger.log("guardrails", latency)
-        
         return {
             "latency_ms": state.get("latency_ms", 0) + latency
         }
@@ -131,6 +158,8 @@ async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for generating the answer."""
+    if state.get("should_refuse", False):
+        return state
     start_time = time.time()
     try:
         query = state.get("transcript", "")
@@ -138,10 +167,13 @@ async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         if not chunks:
             # If no chunks, we might want to refuse or use a fallback
-            return {
-                "answer": "I don't have enough information to answer that question.",
-                "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
-            }
+            state["should_refuse"] = True
+            state["refusal_reason"] = "No relevant chunks found"
+            state["refusal_guardrail"] = "generation_node_no_chunks"
+            state["answer"] = get_refusal_template()  # we set the answer to a refusal template
+            latency = (time.time() - start_time) * 1000
+            latency_logger.log("generation", latency)
+            return state
         
         # Prepare context from chunks
         context = "\n\n".join(chunks[:5])  # Use top 5 chunks
@@ -149,14 +181,32 @@ async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Format the prompt
         prompt = PROMPT_TEMPLATE.format(context=context, question=query)
         
-        # Generate the answer using the LLM client
-        answer = llm_client.generate(prompt)
+        # Generate the answer using the LLM client with retry
+        @retry_with_backoff
+        def _generate_with_retry(prompt):
+            return llm_client.generate(prompt)
+        
+        try:
+            answer = _generate_with_retry(prompt)
+        except Exception as e:
+            return {
+                "error": f"Generation failed: {str(e)}",
+                "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
+            }
+        
+        # Hallucination check
+        if is_hallucinated(answer, chunks):
+            state["should_refuse"] = True
+            state["refusal_reason"] = "Answer is hallucinated (not supported by the retrieved chunks)"
+            state["refusal_guardrail"] = "hallucination_check"
+            state["answer"] = get_refusal_template()  # override the answer with a refusal template
+        else:
+            state["answer"] = answer
         
         latency = (time.time() - start_time) * 1000
         latency_logger.log("generation", latency)
-        
         return {
-            "answer": answer,
+            "answer": state.get("answer"),
             "latency_ms": state.get("latency_ms", 0) + latency
         }
     except Exception as e:

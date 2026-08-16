@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
-from harps.state import GraphState
-from harps.nodes import stt_node, retrieve_node, guardrails_node, generation_node
+from app.harness.state import GraphState
+from app.harness.nodes import stt_node, retrieve_node, guardrails_node, generation_node
 
 def create_rag_graph() -> StateGraph:
     """Create the RAG pipeline as a LangGraph StateGraph."""

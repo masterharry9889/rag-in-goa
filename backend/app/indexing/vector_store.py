@@ -1,5 +1,7 @@
 import faiss
 import numpy as np
+import sqlite3
+import json
 from typing import List, Dict, Any
 from .embedder import Embedder
 
@@ -42,31 +44,65 @@ class VectorStore:
         
         # Build results
         results = []
-        for i, idx in enumerate(indices[0]):
-            if idx < len(self.texts):  # safety check
-                results.append({
-                    "text": self.texts[idx],
-                    "metadata": self.metadatas[idx],
-                    "distance": float(distances[0][i])
-                })
+        
+        if hasattr(self, '_db_path') and self._db_path:
+            # Fetch from SQLite database
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            for i, idx in enumerate(indices[0]):
+                if idx >= 0:
+                    cursor.execute('SELECT text, metadata FROM chunks WHERE id = ?', (int(idx),))
+                    row = cursor.fetchone()
+                    if row:
+                        results.append({
+                            "text": row[0],
+                            "metadata": json.loads(row[1]) if row[1] else {},
+                            "distance": float(distances[0][i])
+                        })
+            conn.close()
+        else:
+            # Fallback to in-memory list (if not yet persisted)
+            for i, idx in enumerate(indices[0]):
+                if idx >= 0 and idx < len(self.texts):  # safety check
+                    results.append({
+                        "text": self.texts[idx],
+                        "metadata": self.metadatas[idx],
+                        "distance": float(distances[0][i])
+                    })
         return results
 
     def persist(self, path: str):
         """Persist the vector store to disk."""
         # We'll save the index and the texts/metadatas separately
         faiss.write_index(self.index, f"{path}.index")
-        # We can save texts and metadatas as a simple JSON or pickle; for simplicity, we'll use JSON
-        import json
-        with open(f"{path}_texts.json", "w") as f:
-            json.dump({"texts": self.texts, "metadatas": self.metadatas}, f)
+        
+        # Save texts and metadatas into an SQLite database
+        db_path = f"{path}_texts.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS chunks
+                          (id INTEGER PRIMARY KEY, text TEXT, metadata TEXT)''')
+        
+        # Clear existing data just in case
+        cursor.execute('DELETE FROM chunks')
+        
+        # Insert all
+        for i, (text, meta) in enumerate(zip(self.texts, self.metadatas)):
+            cursor.execute('INSERT INTO chunks (id, text, metadata) VALUES (?, ?, ?)',
+                           (i, text, json.dumps(meta)))
+        
+        conn.commit()
+        conn.close()
+        self._db_path = db_path
 
     def load(self, path: str):
         """Load the vector store from disk."""
         # Load the index
         self.index = faiss.read_index(f"{path}.index")
-        # Load texts and metadatas
-        import json
-        with open(f"{path}_texts.json", "r") as f:
-            data = json.load(f)
-            self.texts = data["texts"]
-            self.metadatas = data["metadatas"]
+        
+        # Keep track of DB path for retrieval
+        self._db_path = f"{path}_texts.db"
+        
+        # Clear in-memory lists since we will fetch from DB directly
+        self.texts = []
+        self.metadatas = []

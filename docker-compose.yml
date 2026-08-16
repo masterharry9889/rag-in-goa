@@ -23,7 +23,7 @@ services:
       - CHUNK_OVERLAP=${CHUNK_OVERLAP}
       - TOP_K=${TOP_K}
     volumes:
-      - ./data:/app/data
+      - ./backend/data:/app/data
       - ./backend:/app/backend
     depends_on:
       - vector-db

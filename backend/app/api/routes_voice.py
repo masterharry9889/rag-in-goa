@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from schemas import VoiceQueryRequest, VoiceQueryResponse
+from app.api.schemas import VoiceQueryRequest, VoiceQueryResponse
 import base64
-from harness.graph import create_rag_graph
+from app.harness.graph import create_rag_graph
 
 router = APIRouter()
 

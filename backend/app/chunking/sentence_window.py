@@ -1,4 +1,4 @@
-from chunking.base import ChunkerStrategy
+from app.chunking.base import ChunkerStrategy
 from typing import List, Dict
 
 class SentenceWindowChunker(ChunkerStrategy):
