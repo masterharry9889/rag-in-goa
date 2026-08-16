@@ -12,7 +12,6 @@ from app.generation.prompt_templates import PROMPT_TEMPLATE
 from app.generation.llm_client import LLMClient
 from app.observability.latency_logger import LatencyLogger
 from app.indexing.embedder import Embedder
-from app.indexing.vector_store import VectorStore
 # Guardrails imports
 from app.guardrails.input_filter import is_input_safe, is_input_on_topic
 from app.guardrails.grounding_check import is_grounded
@@ -28,21 +27,37 @@ if stt_provider == "sarvam":
 else:
     stt_client = ElevenLabsClient()
 
+import yaml
+import chromadb
+from app.indexing.chroma_store import ChromaStore
+
 # Initialize embedder and vector store
 embedder = Embedder()
-vector_store_path = os.getenv("VECTOR_DB_PATH", "./data/processed/vector_db")
-# Try to load the vector store, if it doesn't exist, we'll create a new one (but note: we need to have built it first)
-if os.path.exists(f"{vector_store_path}.index") and os.path.exists(f"{vector_store_path}_texts.json"):
-    vector_store = VectorStore()
-    vector_store.load(vector_store_path)
-else:
-    # If the vector store doesn't exist, we'll create an empty one and note that it needs to be built.
-    # In a real application, we might want to build it on startup or have a separate script.
-    vector_store = VectorStore()
-    # We could also build it here, but for now we'll just leave it empty and note that it needs to be built.
-    print(f"Warning: Vector store not found at {vector_store_path}. Please run the build_index script first.")
+vector_store_path = os.getenv("VECTOR_DB_PATH", "./data/chroma_db")
 
-retriever = Retriever(vector_store) if vector_store else None
+# Read config for collection name and thresholds
+config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.yaml")
+collection_name = "msmarco_xi_passages"
+domain_centroid_threshold = 0.20
+try:
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+        collection_name = config.get("retrieval", {}).get("vector_db", {}).get("collection_name", collection_name)
+        domain_centroid_threshold = config.get("guardrails", {}).get("input_filter", {}).get("domain_centroid_threshold", domain_centroid_threshold)
+except Exception:
+    pass
+
+vector_store = ChromaStore(persist_directory=vector_store_path, collection_name=collection_name)
+
+# Check if collection has elements to throw a warning
+try:
+    if vector_store.collection.count() == 0:
+        print(f"Warning: Vector store collection '{collection_name}' is empty. Please run the build_index script first.")
+except Exception:
+    print(f"Warning: Vector store collection '{collection_name}' not accessible. Please run the build_index script first.")
+
+retriever = Retriever(vector_store, embedder)
+
 reranker = Reranker()
 llm_client = LLMClient()  # Uses environment variables for provider and API key
 latency_logger = LatencyLogger()
@@ -78,6 +93,13 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "error": f"STT failed: {str(e)}",
             "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
         }
+
+def get_chunk_texts(chunks: list) -> list:
+    """Helper to extract text from chunk dictionaries."""
+    if not chunks: return []
+    if isinstance(chunks[0], dict):
+        return [c.get("text", "") for c in chunks]
+    return chunks
 
 async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for retrieving relevant chunks."""
@@ -120,7 +142,7 @@ async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # 1. Input filter
         is_safe = is_input_safe(query)
-        is_on_topic = is_input_on_topic(query)
+        is_on_topic = is_input_on_topic(query, embedder, domain_centroid_threshold)
         if not is_safe or not is_on_topic:
             if not is_safe and not is_on_topic:
                 reason = "Query is unsafe and off-topic"
@@ -131,16 +153,19 @@ async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
             state["should_refuse"] = True
             state["refusal_reason"] = reason
             state["refusal_guardrail"] = "input_filter"
+            state["answer"] = get_refusal_template()
             latency = (time.time() - start_time) * 1000
             latency_logger.log("guardrails", latency)
             return state
         
         # 2. Grounding check: check if the query is grounded in the chunks (as a proxy for relevance)
         # We use the query as the answer in the grounding check to see if the chunks support the query.
-        if not is_grounded(query, chunks):
+        chunk_strs = get_chunk_texts(chunks)
+        if not is_grounded(query, chunk_strs):
             state["should_refuse"] = True
             state["refusal_reason"] = "Retrieved chunks do not support answering the query"
             state["refusal_guardrail"] = "grounding_check"
+            state["answer"] = get_refusal_template()
             latency = (time.time() - start_time) * 1000
             latency_logger.log("guardrails", latency)
             return state
@@ -175,8 +200,10 @@ async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
             latency_logger.log("generation", latency)
             return state
         
+        chunk_strs = get_chunk_texts(chunks)
+        
         # Prepare context from chunks
-        context = "\n\n".join(chunks[:5])  # Use top 5 chunks
+        context = "\n\n".join(chunk_strs[:5])  # Use top 5 chunks
         
         # Format the prompt
         prompt = PROMPT_TEMPLATE.format(context=context, question=query)
@@ -195,7 +222,7 @@ async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
             }
         
         # Hallucination check
-        if is_hallucinated(answer, chunks):
+        if is_hallucinated(answer, chunk_strs):
             state["should_refuse"] = True
             state["refusal_reason"] = "Answer is hallucinated (not supported by the retrieved chunks)"
             state["refusal_guardrail"] = "hallucination_check"

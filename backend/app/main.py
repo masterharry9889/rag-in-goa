@@ -5,15 +5,29 @@ from app.api.routes_config import router as config_router
 from contextlib import asynccontextmanager
 import os
 from app.indexing.build_index import build_index
+import yaml
+import chromadb
 
-VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./data/processed/vector_db")
+VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./data/chroma_db")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Load config to get collection name
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.yaml")
+    collection_name = "msmarco_xi_passages"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+            collection_name = config.get("retrieval", {}).get("vector_db", {}).get("collection_name", collection_name)
+    except Exception:
+        pass
+
     # Check if the index exists
-    index_file = f"{VECTOR_DB_PATH}.index"
-    texts_file = f"{VECTOR_DB_PATH}_texts.db"
-    if not (os.path.exists(index_file) and os.path.exists(texts_file)):
+    client = chromadb.PersistentClient(path=VECTOR_DB_PATH)
+    try:
+        client.get_collection(name=collection_name)
+        print("Vector index found.")
+    except Exception:
         print(f"Vector index not found at {VECTOR_DB_PATH}. Attempting to build...")
         try:
             build_index()  # Process full dataset without limits
@@ -21,8 +35,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Failed to build index: {e}")
             raise RuntimeError(f"Failed to build index: {e}") from e
-    else:
-        print("Vector index found.")
     yield
     # Shutdown event (if any) can go here
 

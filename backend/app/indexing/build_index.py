@@ -6,13 +6,6 @@ Steps:
 3. Embed the chunks
 4. Add to vector store and persist
 """
-import os
-import json
-from typing import List, Dict, Any, Optional
-from datasets import load_dataset  # Assuming we use Hugging Face datasets
-from app.chunking.registry import ChunkerRegistry
-from app.indexing.embedder import Embedder
-from app.indexing.vector_store import VectorStore
 
 import os
 import json
@@ -60,59 +53,96 @@ def build_index():
     
     # Load dataset from local parquet file instead of downloading
     import pyarrow.parquet as pq
+    import hashlib
+    
+    selected_only = config.get("indexing", {}).get("selected_passages_only", True)
+    
     local_file = os.path.join(base_dir, "data", "raw", "hintrain.parquet")
     print(f"Loading local dataset from {local_file}...")
     if not os.path.exists(local_file):
         raise FileNotFoundError(f"Local dataset file not found at {local_file}")
         
-    print("Reading parquet file...")
+    print("Reading parquet file in batches...")
     parquet_file = pq.ParquetFile(local_file)
-    dataset = []
-    for batch in parquet_file.iter_batches():
-        dataset.extend(batch.to_pylist())
 
-    batch_size = 5000
+    batch_size = 128  # Tuned for throughput
     batch_chunks = []
     batch_metadatas = []
     total_embedded = 0
+    total_skipped = 0
+    total_filtered = 0
+    
+    seen_hashes = set()
 
-    for idx, item in enumerate(dataset):
-        passages_dict = item.get('passages', {})
-        translated_passages = passages_dict.get('Translated_passages', [])
-        
-        if not translated_passages:
-            continue
+    for batch_idx, batch in enumerate(parquet_file.iter_batches()):
+        for item in batch.to_pylist():
+            passages_dict = item.get('passages', {})
+            translated_passages = passages_dict.get('Translated_passages', [])
+            is_selected = passages_dict.get('is_selected', [])
+            query_id = str(item.get('query_id', ''))
             
-        text = "\n\n".join(translated_passages)
-        answer = item.get('Answer', '').strip()
-        if answer:
-            text = f"Answer: {answer}\n\nPassages:\n{text}"
-            
-        if not text.strip():
-            continue
-        
-        chunks = chunker.chunk(text, metadata=item)
-        batch_chunks.extend(chunks)
-        batch_metadatas.extend([item] * len(chunks))
-        
-        if len(batch_chunks) >= batch_size:
-            print(f"Embedding batch of {len(batch_chunks)} chunks... Total processed docs: {idx}")
-            embeddings = embedder.embed(batch_chunks)
-            print("Adding batch to vector store...")
-            vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
-            total_embedded += len(batch_chunks)
-            batch_chunks = []
-            batch_metadatas = []
+            if not translated_passages:
+                continue
+                
+            for idx_p, passage in enumerate(translated_passages):
+                # Filter by is_selected
+                if selected_only and idx_p < len(is_selected) and is_selected[idx_p] != 1:
+                    total_filtered += 1
+                    continue
+                
+                passage_text = passage.strip()
+                if not passage_text:
+                    continue
+                
+                # Deduplication
+                passage_hash = hashlib.sha256(passage_text.encode('utf-8')).hexdigest()
+                if passage_hash in seen_hashes:
+                    total_skipped += 1
+                    continue
+                seen_hashes.add(passage_hash)
+                
+                # Chunk passage
+                chunks = chunker.chunk(passage_text, metadata={"query_id": query_id, "passage_hash": passage_hash})
+                batch_chunks.extend(chunks)
+                
+                meta = {"query_id": query_id, "passage_hash": passage_hash}
+                batch_metadatas.extend([meta] * len(chunks))
+                
+                if len(batch_chunks) >= batch_size:
+                    print(f"Embedding batch of {len(batch_chunks)} chunks... Total embedded: {total_embedded}")
+                    embeddings = embedder.embed(batch_chunks)
+                    vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
+                    total_embedded += len(batch_chunks)
+                    batch_chunks = []
+                    batch_metadatas = []
 
     # Process remaining chunks
     if batch_chunks:
         print(f"Embedding final batch of {len(batch_chunks)} chunks...")
         embeddings = embedder.embed(batch_chunks)
-        print("Adding final batch to vector store...")
         vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
         total_embedded += len(batch_chunks)
 
     print(f"Total chunks embedded: {total_embedded}")
+    print(f"Total chunks skipped as duplicates: {total_skipped}")
+    print(f"Total chunks filtered by is_selected: {total_filtered}")
+    
+    # Get directory size
+    def get_dir_size(path='.'):
+        total = 0
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if entry.is_file():
+                        total += entry.stat().st_size
+                    elif entry.is_dir():
+                        total += get_dir_size(entry.path)
+        except Exception:
+            pass
+        return total
+        
+    db_size_mb = get_dir_size(persist_path) / (1024 * 1024)
+    print(f"Final data/chroma_db size: {db_size_mb:.2f} MB")
     
     print("Persisting...")
     vector_store.persist()

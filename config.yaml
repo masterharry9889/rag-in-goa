@@ -7,7 +7,7 @@ dataset:
 
 chunking:
   # Options: fixed_size, recursive, semantic, metadata_aware
-  default_strategy: "fixed_size"
+  default_strategy: "metadata_aware"
   fixed_size:
     chunk_size_tokens: 2048
     overlap_pct: 0.30  # 30% overlap
@@ -19,6 +19,9 @@ chunking:
     max_chunk_sentences: 6
   metadata_aware:
     align_to_passage: true
+
+indexing:
+  selected_passages_only: true
 
 retrieval:
   # Fast, highly performant multilingual sentence encoder

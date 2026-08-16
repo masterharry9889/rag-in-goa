@@ -8,5 +8,9 @@ httpx
 sentence-transformers
 faiss-cpu
 datasets
-numpypyyaml
+numpy
+pyyaml
 chromadb
+openai
+groq
+anthropic

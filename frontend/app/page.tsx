@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Link from 'next/link';
 import CreepyButton from '@/components/CreepyButton';
 import GooeyTextReveal from '@/components/GooeyTextReveal';
 
@@ -21,12 +22,7 @@ export default function Home() {
       window.addEventListener("mousemove", handleMouseMove);
     }
 
-    const loaderTimer = setTimeout(() => {
-      setHasEntered(true);
-    }, 3500);
-
     return () => {
-      clearTimeout(loaderTimer);
       window.removeEventListener("mousemove", handleMouseMove);
     };
   }, [hasEntered]);
@@ -110,9 +106,11 @@ export default function Home() {
               </GooeyTextReveal>
 
               <GooeyTextReveal delay={0.8} duration={1.5}>
-                <button className="px-10 py-5 rounded-full bg-brand-main text-white font-bold text-lg hover:bg-brand-light transition-all duration-300 shadow-[0_0_30px_rgba(73,154,19,0.3)] hover:shadow-[0_0_50px_rgba(142,202,60,0.5)] hover:-translate-y-1 ring-1 ring-white/10">
-                  Try it now
-                </button>
+                <Link href="/voice">
+                  <button className="px-10 py-5 rounded-full bg-brand-main text-white font-bold text-lg hover:bg-brand-light transition-all duration-300 shadow-[0_0_30px_rgba(73,154,19,0.3)] hover:shadow-[0_0_50px_rgba(142,202,60,0.5)] hover:-translate-y-1 ring-1 ring-white/10">
+                    Try it now
+                  </button>
+                </Link>
               </GooeyTextReveal>
 
             </div>
