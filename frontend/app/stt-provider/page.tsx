@@ -136,7 +136,10 @@ export default function STTProviderPage() {
       {/* Dynamic background responding to mouse */}
       <motion.div 
         className="absolute top-0 right-0 w-[600px] h-[600px] rounded-full blur-[150px] -z-10 pointer-events-none bg-brand-light/10"
-        animate={{ x: (mousePos.x - window.innerWidth/2) * 0.5, y: (mousePos.y - window.innerHeight/2) * 0.5 }}
+        animate={{ 
+          x: (mousePos.x - (typeof window !== "undefined" ? window.innerWidth / 2 : 500)) * 0.5, 
+          y: (mousePos.y - (typeof window !== "undefined" ? window.innerHeight / 2 : 500)) * 0.5 
+        }}
         transition={{ type: "tween", ease: "backOut", duration: 1 }}
       />
       <div className="absolute bottom-1/4 left-1/4 w-[600px] h-[600px] bg-brand-dark/20 rounded-full blur-[150px] -z-10 pointer-events-none"></div>
