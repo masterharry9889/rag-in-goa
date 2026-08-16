@@ -1,35 +1,29 @@
 import os
-import requests
-import base64
+import io
 from app.stt.base import STTBase
+from elevenlabs.client import AsyncElevenLabs
 
 class ElevenLabsClient(STTBase):
     def __init__(self):
         self.api_key = os.getenv("ELEVENLABS_API_KEY")
         if not self.api_key:
             raise ValueError("ELEVENLABS_API_KEY environment variable is not set")
-        # ElevenLabs API endpoint for speech to text
-        self.url = "https://api.elevenlabs.io/v1/speech-to-text"
+        self.client = AsyncElevenLabs(api_key=self.api_key)
 
     async def transcribe(self, audio_data: bytes) -> str:
-        # Encode the audio data to base64
-        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        file_obj = io.BytesIO(audio_data)
+        file_obj.name = "audio.wav"
         
-        headers = {
-            "xi-api-key": self.api_key,
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "audio": audio_base64,
-            # You might need to specify the model_id, etc. Check ElevenLabs documentation.
-            "model_id": "scribe_v1"  # Example, adjust as needed
-        }
-        
-        response = requests.post(self.url, json=payload, headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"ElevenLabs API request failed with status {response.status_code}: {response.text}")
-        
-        result = response.json()
-        # Adjust based on the actual ElevenLabs API response format
-        return result.get("text", "")
+        try:
+            response = await self.client.speech_to_text.convert(
+                file=file_obj,
+                model_id="scribe_v1",  # Adjust model as needed
+            )
+            
+            if hasattr(response, "text"):
+                return response.text
+            elif isinstance(response, dict):
+                return response.get("text", "")
+            return str(response)
+        except Exception as e:
+            raise Exception(f"ElevenLabs SDK request failed: {str(e)}")

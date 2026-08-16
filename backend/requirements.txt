@@ -14,3 +14,5 @@ chromadb
 openai
 groq
 anthropic
+sarvamai==0.1.31a4
+elevenlabs

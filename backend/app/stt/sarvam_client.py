@@ -1,32 +1,33 @@
 import os
-import requests
-import base64
+import io
 from app.stt.base import STTBase
+from dotenv import load_dotenv
+from sarvamai import AsyncSarvamAI
+
+load_dotenv()
 
 class SarvamClient(STTBase):
     def __init__(self):
         self.api_key = os.getenv("SARVAM_API_KEY")
         if not self.api_key:
             raise ValueError("SARVAM_API_KEY environment variable is not set")
-        self.url = "https://api.sarvam.ai/speech-to-text-translate"
+        self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
 
     async def transcribe(self, audio_data: bytes) -> str:
-        headers = {
-            "api-subscription-key": self.api_key
-        }
+        file_obj = io.BytesIO(audio_data)
+        file_obj.name = "audio.wav"
         
-        payload = {
-            "model": "saaras:v2.5",  # Adjust model as needed. The documentation says saaras:v1 or saaras:v3
-            "prompt": ""
-        }
-        
-        files = {
-            "file": ("audio.wav", audio_data, "audio/wav")
-        }
-        
-        response = requests.post(self.url, data=payload, files=files, headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Sarvam API request failed with status {response.status_code}: {response.text}")
-        
-        result = response.json()
-        return result.get("transcript", "")
+        try:
+            response = await self.client.speech_to_text.transcribe(
+                file=file_obj,
+                model="saaras:v3",
+                mode="transcribe"
+            )
+            
+            if hasattr(response, "transcript"):
+                return response.transcript
+            elif isinstance(response, dict):
+                return response.get("transcript", "")
+            return str(response)
+        except Exception as e:
+            raise Exception(f"Sarvam SDK request failed: {str(e)}")

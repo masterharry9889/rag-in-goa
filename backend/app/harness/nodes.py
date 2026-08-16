@@ -2,6 +2,9 @@ from typing import Dict, Any
 import time
 import os
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
 from app.stt.base import STTBase
 from app.stt.sarvam_client import SarvamClient
 from app.stt.elevenlabs_client import ElevenLabsClient
@@ -64,7 +67,7 @@ latency_logger = LatencyLogger()
 
 async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for speech-to-text transcription."""
-    if state.get("should_refuse", False):
+    if state.get("should_refuse", False) or state.get("error"):
         return state
     start_time = time.time()
     try:
@@ -84,6 +87,20 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
         latency = (time.time() - start_time) * 1000
         latency_logger.log("stt", latency)
         
+        if not transcript or not transcript.strip():
+            state["should_refuse"] = True
+            state["refusal_reason"] = "No speech detected"
+            state["refusal_guardrail"] = "stt_node"
+            state["answer"] = "I couldn't hear any speech. Please try again."
+            return {
+                "should_refuse": True,
+                "refusal_reason": "No speech detected",
+                "refusal_guardrail": "stt_node",
+                "answer": "I couldn't hear any speech. Please try again.",
+                "transcript": "",
+                "latency_ms": state.get("latency_ms", 0) + latency
+            }
+            
         return {
             "transcript": transcript,
             "latency_ms": state.get("latency_ms", 0) + latency
@@ -103,7 +120,7 @@ def get_chunk_texts(chunks: list) -> list:
 
 async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for retrieving relevant chunks."""
-    if state.get("should_refuse", False):
+    if state.get("should_refuse", False) or state.get("error"):
         return state
     start_time = time.time()
     try:
@@ -133,7 +150,7 @@ async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for running guardrails on input and retrieved context."""
-    if state.get("should_refuse", False):
+    if state.get("should_refuse", False) or state.get("error"):
         return state
     start_time = time.time()
     try:
@@ -183,7 +200,7 @@ async def guardrails_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Node for generating the answer."""
-    if state.get("should_refuse", False):
+    if state.get("should_refuse", False) or state.get("error"):
         return state
     start_time = time.time()
     try:

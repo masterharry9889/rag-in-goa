@@ -2,42 +2,34 @@
 Offline script to build the vector index from a dataset.
 Steps:
 1. Load dataset (e.g., from Hugging Face or local files)
-2. Chunk the documents using a selected chunking strategy
-3. Embed the chunks
-4. Add to vector store and persist
+2. Filter selected passages and global deduplicate
+3. Chunk the documents using a selected chunking strategy
+4. Embed the chunks
+5. Add to vector store and persist
 """
 
 import os
 import json
 import yaml
+import hashlib
 from typing import List, Dict, Any, Optional
-from datasets import load_dataset
-from app.chunking.registry import ChunkerRegistry
-from app.indexing.embedder import Embedder
-from app.indexing.chroma_store import ChromaStore
 
 def build_index():
     # Load config
-    # __file__ is backend/app/indexing/build_index.py
-    # we need to go up 4 levels to get to rag-in-goa
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     config_path = os.path.join(base_dir, "config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    dataset_name = config["dataset"]["hf_repo"]
-    split = config["dataset"]["split"]
-    
     chunking_strategy = config["chunking"]["default_strategy"]
-    
     embed_model = config["retrieval"]["embedding_model"]
     persist_dir = config["retrieval"]["vector_db"]["persist_directory"]
     collection_name = config["retrieval"]["vector_db"]["collection_name"]
     
     # Initialize chunker
+    from app.chunking.registry import ChunkerRegistry
     if chunking_strategy == "metadata_aware":
         align = config["chunking"]["metadata_aware"]["align_to_passage"]
-        # Since our updated metadata_aware takes align_to_passage, we'll instantiate it directly for simplicity
         from app.chunking.metadata_aware import MetadataAwareChunker
         chunker = MetadataAwareChunker(align_to_passage=align)
     else:
@@ -46,34 +38,27 @@ def build_index():
         chunk_overlap = int(chunk_size * overlap_pct)
         chunker = ChunkerRegistry.get_strategy(chunking_strategy, chunk_size=chunk_size, overlap=chunk_overlap)
         
+    from app.indexing.embedder import Embedder
     embedder = Embedder(model_name=embed_model)
     
+    from app.indexing.chroma_store import ChromaStore
     persist_path = os.path.join(base_dir, persist_dir)
     vector_store = ChromaStore(persist_directory=persist_path, collection_name=collection_name)
     
-    # Load dataset from local parquet file instead of downloading
     import pyarrow.parquet as pq
-    import hashlib
     
     selected_only = config.get("indexing", {}).get("selected_passages_only", True)
-    
     local_file = os.path.join(base_dir, "data", "raw", "hintrain.parquet")
-    print(f"Loading local dataset from {local_file}...")
+    print(f"Loading local dataset from {local_file}...", flush=True)
     if not os.path.exists(local_file):
         raise FileNotFoundError(f"Local dataset file not found at {local_file}")
         
-    print("Reading parquet file in batches...")
+    print("Reading parquet file to extract and deduplicate passages...", flush=True)
     parquet_file = pq.ParquetFile(local_file)
 
-    batch_size = 128  # Tuned for throughput
-    batch_chunks = []
-    batch_metadatas = []
-    total_embedded = 0
-    total_skipped = 0
     total_filtered = 0
+    unique_passages = {} # passage_hash -> {"text": str, "query_ids": set()}
     
-    seen_hashes = set()
-
     for batch_idx, batch in enumerate(parquet_file.iter_batches()):
         for item in batch.to_pylist():
             passages_dict = item.get('passages', {})
@@ -94,40 +79,51 @@ def build_index():
                 if not passage_text:
                     continue
                 
-                # Deduplication
                 passage_hash = hashlib.sha256(passage_text.encode('utf-8')).hexdigest()
-                if passage_hash in seen_hashes:
-                    total_skipped += 1
-                    continue
-                seen_hashes.add(passage_hash)
-                
-                # Chunk passage
-                chunks = chunker.chunk(passage_text, metadata={"query_id": query_id, "passage_hash": passage_hash})
-                batch_chunks.extend(chunks)
-                
-                meta = {"query_id": query_id, "passage_hash": passage_hash}
-                batch_metadatas.extend([meta] * len(chunks))
-                
-                if len(batch_chunks) >= batch_size:
-                    print(f"Embedding batch of {len(batch_chunks)} chunks... Total embedded: {total_embedded}")
-                    embeddings = embedder.embed(batch_chunks)
-                    vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
-                    total_embedded += len(batch_chunks)
-                    batch_chunks = []
-                    batch_metadatas = []
+                if passage_hash in unique_passages:
+                    unique_passages[passage_hash]["query_ids"].add(query_id)
+                else:
+                    unique_passages[passage_hash] = {
+                        "text": passage_text,
+                        "query_ids": {query_id}
+                    }
+
+    print(f"Total passages filtered out (is_selected=0): {total_filtered}", flush=True)
+    print(f"Total unique canonical passages to index: {len(unique_passages)}", flush=True)
+    
+    print("Chunking and Embedding...", flush=True)
+    batch_size = 128
+    batch_chunks = []
+    batch_metadatas = []
+    total_embedded = 0
+
+    for passage_hash, data in unique_passages.items():
+        passage_text = data["text"]
+        query_ids_str = ",".join(sorted(data["query_ids"]))
+        
+        chunks = chunker.chunk(passage_text, metadata={"query_ids": query_ids_str, "passage_hash": passage_hash})
+        batch_chunks.extend(chunks)
+        
+        meta = {"query_ids": query_ids_str, "passage_hash": passage_hash}
+        batch_metadatas.extend([meta] * len(chunks))
+        
+        if len(batch_chunks) >= batch_size:
+            print(f"Embedding batch of {len(batch_chunks)} chunks... Total embedded: {total_embedded}", flush=True)
+            embeddings = embedder.embed(batch_chunks)
+            vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
+            total_embedded += len(batch_chunks)
+            batch_chunks = []
+            batch_metadatas = []
 
     # Process remaining chunks
     if batch_chunks:
-        print(f"Embedding final batch of {len(batch_chunks)} chunks...")
+        print(f"Embedding final batch of {len(batch_chunks)} chunks...", flush=True)
         embeddings = embedder.embed(batch_chunks)
         vector_store.add_texts(batch_chunks, embeddings=embeddings, metadatas=batch_metadatas)
         total_embedded += len(batch_chunks)
 
-    print(f"Total chunks embedded: {total_embedded}")
-    print(f"Total chunks skipped as duplicates: {total_skipped}")
-    print(f"Total chunks filtered by is_selected: {total_filtered}")
+    print(f"Total chunks embedded globally: {total_embedded}", flush=True)
     
-    # Get directory size
     def get_dir_size(path='.'):
         total = 0
         try:
@@ -142,11 +138,8 @@ def build_index():
         return total
         
     db_size_mb = get_dir_size(persist_path) / (1024 * 1024)
-    print(f"Final data/chroma_db size: {db_size_mb:.2f} MB")
-    
-    print("Persisting...")
-    vector_store.persist()
-    print("Index built successfully!")
+    print(f"Final data/chroma_db size: {db_size_mb:.2f} MB", flush=True)
+    print("Index built successfully!", flush=True)
 
 if __name__ == "__main__":
     build_index()

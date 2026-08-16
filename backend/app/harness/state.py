@@ -1,6 +1,6 @@
 from typing import TypedDict, List, Dict, Any, Optional
 
-class GraphState(TypedDict):
+class GraphState(TypedDict, total=False):
     """Represents the state of our graph."""
     query: str  # The user's query (after STT)
     transcript: str  # The raw transcript from STT
@@ -9,3 +9,6 @@ class GraphState(TypedDict):
     error: Optional[str]  # Any error that occurred
     retry_count: int  # Number of retries for the current node
     latency_ms: float  # Total latency so far
+    should_refuse: bool
+    refusal_reason: str
+    refusal_guardrail: str
