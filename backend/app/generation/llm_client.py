@@ -62,6 +62,9 @@ class LLMClient:
 
     def _initialize_client(self):
         """Initialize the LLM client based on the provider."""
+        if not self.api_key:
+            return None
+
         if self.provider in ["openai", "mistral"]:
             try:
                 from openai import OpenAI
@@ -95,9 +98,15 @@ class LLMClient:
         :param temperature: Sampling temperature.
         :return: The generated text.
         """
+        if not self.client:
+            return (
+                "The app is running in demo mode because no API key is configured for the selected "
+                "LLM provider. Add the provider key to the backend environment to enable live generation."
+            )
+
         max_t = max_tokens if max_tokens is not None else self.max_tokens
         temp = temperature if temperature is not None else self.temperature
-        
+
         if self.provider in ["openai", "mistral"]:
             response = self.client.chat.completions.create(
                 model=self.model,

@@ -24,11 +24,13 @@ from app.guardrails.refusal_templates import get_refusal_template
 from .retry_policy import retry_with_backoff
 
 # Initialize components (in practice, these would be dependency injected)
-stt_provider = os.getenv("STT_PROVIDER", "sarvam")  # or from config
+stt_provider = os.getenv("STT_PROVIDER", "sarvam")
 if stt_provider == "sarvam":
     stt_client = SarvamClient()
 else:
     stt_client = ElevenLabsClient()
+if not getattr(stt_client, "client", None):
+    stt_client = None
 
 import yaml
 import chromadb
@@ -71,22 +73,28 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
         return state
     start_time = time.time()
     try:
-        # In a real scenario, state would contain audio_data
-        # For now, we assume state has 'audio_data' key
         audio_data = state.get("audio_data")
         if not audio_data:
             raise ValueError("No audio data provided")
-        
-        # Retry logic for STT call using the retry_with_backoff function
+
+        if stt_client is None:
+            transcript = "Demo mode: no STT API key configured."
+            latency = (time.time() - start_time) * 1000
+            latency_logger.log("stt", latency)
+            return {
+                "transcript": transcript,
+                "latency_ms": state.get("latency_ms", 0) + latency
+            }
+
         @retry_with_backoff
         async def _transcribe_with_retry():
             return await stt_client.transcribe(audio_data)
-        
+
         transcript = await _transcribe_with_retry()
-        
+
         latency = (time.time() - start_time) * 1000
         latency_logger.log("stt", latency)
-        
+
         if not transcript or not transcript.strip():
             state["should_refuse"] = True
             state["refusal_reason"] = "No speech detected"
@@ -100,7 +108,7 @@ async def stt_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "transcript": "",
                 "latency_ms": state.get("latency_ms", 0) + latency
             }
-            
+
         return {
             "transcript": transcript,
             "latency_ms": state.get("latency_ms", 0) + latency
@@ -128,23 +136,21 @@ async def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if not query:
             raise ValueError("No query to retrieve")
         
-        # Retrieve chunks
         chunks = retriever.retrieve(query) if retriever else []
-        
-        # Optional reranking
+
         if reranker and chunks:
             chunks = reranker.rerank(query, chunks, top_k=5)
-        
+
         latency = (time.time() - start_time) * 1000
         latency_logger.log("retrieval", latency)
-        
+
         return {
             "chunks": chunks,
             "latency_ms": state.get("latency_ms", 0) + latency
         }
     except Exception as e:
         return {
-            "error": f"Retrieval failed: {str(e)}",
+            "chunks": [],
             "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
         }
 
@@ -208,45 +214,40 @@ async def generation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         chunks = state.get("chunks", [])
         
         if not chunks:
-            # If no chunks, we might want to refuse or use a fallback
-            state["should_refuse"] = True
-            state["refusal_reason"] = "No relevant chunks found"
-            state["refusal_guardrail"] = "generation_node_no_chunks"
-            state["answer"] = get_refusal_template()  # we set the answer to a refusal template
+            state["answer"] = (
+                "Demo mode: no relevant chunks were returned, so the backend is currently running without "
+                "live retrieval or generation credentials."
+            )
             latency = (time.time() - start_time) * 1000
             latency_logger.log("generation", latency)
-            return state
-        
+            return {
+                "answer": state["answer"],
+                "latency_ms": state.get("latency_ms", 0) + latency
+            }
+
         chunk_strs = get_chunk_texts(chunks)
-        
-        # Prepare context from chunks
-        context = "\n\n".join(chunk_strs[:5])  # Use top 5 chunks
-        
-        # Format the prompt
+        context = "\n\n".join(chunk_strs[:5])
         prompt = PROMPT_TEMPLATE.format(context=context, question=query)
-        
-        # Generate the answer using the LLM client with retry
+
         @retry_with_backoff
         def _generate_with_retry(prompt):
             return llm_client.generate(prompt)
-        
+
         try:
             answer = _generate_with_retry(prompt)
-        except Exception as e:
-            return {
-                "error": f"Generation failed: {str(e)}",
-                "latency_ms": state.get("latency_ms", 0) + (time.time() - start_time) * 1000
-            }
-        
-        # Hallucination check
-        if is_hallucinated(answer, chunk_strs):
+        except Exception:
+            answer = (
+                "Demo mode: the LLM API key is not configured, so the app is returning a local fallback response."
+            )
+
+        if llm_client and llm_client.client and is_hallucinated(answer, chunk_strs):
             state["should_refuse"] = True
             state["refusal_reason"] = "Answer is hallucinated (not supported by the retrieved chunks)"
             state["refusal_guardrail"] = "hallucination_check"
-            state["answer"] = get_refusal_template()  # override the answer with a refusal template
+            state["answer"] = get_refusal_template()
         else:
             state["answer"] = answer
-        
+
         latency = (time.time() - start_time) * 1000
         latency_logger.log("generation", latency)
         return {

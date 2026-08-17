@@ -9,21 +9,22 @@ load_dotenv()
 class SarvamClient(STTBase):
     def __init__(self):
         self.api_key = os.getenv("SARVAM_API_KEY")
-        if not self.api_key:
-            raise ValueError("SARVAM_API_KEY environment variable is not set")
-        self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
+        self.client = AsyncSarvamAI(api_subscription_key=self.api_key) if self.api_key else None
 
     async def transcribe(self, audio_data: bytes) -> str:
+        if not self.client:
+            raise ValueError("SARVAM_API_KEY environment variable is not set")
+
         file_obj = io.BytesIO(audio_data)
         file_obj.name = "audio.wav"
-        
+
         try:
             response = await self.client.speech_to_text.transcribe(
                 file=file_obj,
                 model="saaras:v3",
                 mode="transcribe"
             )
-            
+
             if hasattr(response, "transcript"):
                 return response.transcript
             elif isinstance(response, dict):
