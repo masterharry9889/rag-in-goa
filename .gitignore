@@ -1,7 +1,48 @@
-
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+# Virtual Environment
+venv/
+.venv/
+env/
+.env
+# Data and Models
+data/raw/
+data/chroma/
+*.parquet
+# Logs and Output
+*.log
+retrieval_latency_report.json
+retrieval_latency_stats.csv
+# Frontend (Node.js/Vite/React)
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+frontend/.env.local
+frontend/.env.*.local
+# OS specific
+.DS_Store
+Thumbs.db
 # Added by ggshield
 .cache_ggshield
-
-
-# data downloaded form huggingface
-.data/raw
