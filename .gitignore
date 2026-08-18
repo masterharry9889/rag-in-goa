@@ -1,59 +1,7 @@
-# Environments and Secrets
-.env
-.env.local
-.env.*.local
-.venv/
-venv/
-ENV/
-env/
 
-# Node & Next.js (Frontend)
-node_modules/
-.next/
-out/
-build/
-dist/
-.npm/
+# Added by ggshield
+.cache_ggshield
 
-# Python (Backend)
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
 
-# Data & Vector DB (Specific to this project)
-data/
-backend/data/
-*.index
-*_texts.json
-
-# Large Files
-*.csv
-*.tsv
-*.xlsx
-*.parquet
-*.sqlite
-*.sqlite3
-*.db
-*.mp4
-*.mp3
-*.wav
-*.pdf
-*.bin
-*.pt
-*.pth
-*.h5
-*.hdf5
-*.pkl
-
-# IDEs and OS
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
+# data downloaded form huggingface
+.data/raw
