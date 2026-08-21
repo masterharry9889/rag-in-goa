@@ -21,6 +21,14 @@ RULES (follow strictly):
 6. Be concise and factual."""
 
 
+def _candidate_groq_models() -> list[str]:
+    models = [settings.groq_model]
+    for fallback in getattr(settings, "groq_model_fallbacks", []):
+        if fallback and fallback not in models:
+            models.append(fallback)
+    return models
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def call_groq_api(context: str, question: str) -> str:
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -36,25 +44,44 @@ QUESTION: {question}
 
 Answer in Hindi strictly based on the CONTEXT above:"""
 
-    payload = {
-        "model": settings.groq_model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": 0.1,  # Low temperature for factual grounding
-        "max_tokens": 512,
-    }
+    last_error = None
+    for model_name in _candidate_groq_models():
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": 0.1,  # Low temperature for factual grounding
+            "max_tokens": 512,
+        }
 
-    logger.info("[CHAT] AI request started — model=%s", settings.groq_model)
-    logger.debug("[RAG] Full user message sent to Groq:\n%s", user_message[:800])
+        logger.info("[CHAT] AI request started — model=%s", model_name)
+        logger.debug("[RAG] Full user message sent to Groq:\n%s", user_message[:800])
 
-    response = requests.post(url, headers=headers, json=payload, timeout=20.0)
-    response.raise_for_status()
-    data = response.json()
-    answer = data["choices"][0]["message"]["content"]
-    logger.info("[CHAT] AI response received — length=%d chars", len(answer))
-    return answer
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=20.0)
+            if response.status_code in (400, 404, 422):
+                last_error = requests.HTTPError(f"Groq model rejected: {model_name} ({response.status_code})")
+                logger.warning(
+                    "[CHAT] Model %s rejected by Groq (%s). Trying fallback model.",
+                    model_name,
+                    response.status_code,
+                )
+                continue
+            response.raise_for_status()
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
+            logger.info("[CHAT] AI response received — length=%d chars", len(answer))
+            return answer
+        except requests.HTTPError as exc:
+            last_error = exc
+            if response.status_code not in (400, 404, 422):
+                raise
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Groq model candidates could be used.")
 
 
 def generate(state: GraphState) -> GraphState:

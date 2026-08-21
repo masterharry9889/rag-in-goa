@@ -25,14 +25,23 @@ class Settings(BaseSettings):
     )
 
     # LLM Settings
-    groq_model: str = "groq/compound"
+    # Prefer a model with broad Groq availability and keep a fallback list for
+    # model deprecations / 404s from the Groq API.
+    groq_model: str = "llama-3.1-8b-instant"
+    groq_model_fallbacks: list[str] = [
+        "llama-3.3-70b-versatile",
+        "llama-3.3-70b-specdec",
+        "mixtral-8x7b-32768",
+    ]
 
     # ChromaDB settings
     chroma_path: str = "data/chroma"
     collection_name: str = "hinval_msmarco"
 
-    # Embedding model settings (using a compact model for Hindi)
+    # Embedding model settings (prefer a multilingual model for Hindi, with a
+    # safe fallback for stale/partial HF caches from earlier runs.
     embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model_fallbacks: list[str] = ["sentence-transformers/all-MiniLM-L6-v2"]
     embedding_dimension: int = 384
 
     # Chunking settings

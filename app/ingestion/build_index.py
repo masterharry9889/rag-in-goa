@@ -162,7 +162,7 @@ def build_index():
 
     final_count = collection.count()
     print(
-        f"\n[build_index] ✅ Done.\n"
+        f"\n[build_index] Done.\n"
         f"  Passages seen      : {total_passages_seen}\n"
         f"  Unique chunks indexed: {len(seen_hashes)}\n"
         f"  Collection count   : {final_count}"
