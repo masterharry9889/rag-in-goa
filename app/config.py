@@ -3,8 +3,8 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # API Keys
-    sarvam_api_key: str = "SARVAM_API_KEY"
-    groq_api_key: str = "GROQ_API_KEY"
+    sarvam_api_key: str = ""
+    groq_api_key: str = ""
     
     # LLM Settings
     groq_model: str = "llama3-8b-8192"

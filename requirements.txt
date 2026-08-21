@@ -8,6 +8,8 @@ groq==0.5.0
 pydantic-settings==2.4.0
 tenacity==8.2.3
 numpy==1.26.4
-torch==2.4.0
+pandas==2.2.2
+pyarrow==16.1.0
+torch==2.2.2
 huggingface-hub==0.24.0
 pydantic==2.7.1

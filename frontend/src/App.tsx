@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { ChatInterface, Message } from './ChatInterface';
+import { useState } from 'react';
+import { ChatInterface } from './ChatInterface';
+import type { Message } from './ChatInterface';
 import { InputArea } from './InputArea';
 import { BotMessageSquare } from 'lucide-react';
 import './index.css';
