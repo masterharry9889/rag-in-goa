@@ -19,6 +19,9 @@ surface the exact passage relevant to an incoming Hindi query.
 
 import hashlib
 import logging
+import faulthandler
+
+faulthandler.enable()
 
 import pandas as pd
 from tqdm import tqdm
